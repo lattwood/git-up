@@ -15,7 +15,7 @@ Gem::Specification.new do |s|
   s.license     = "MIT"
 
   s.add_dependency "colored", ">= 1.2"
-  s.add_dependency "grit"
+  s.add_dependency "rugged"
   s.add_development_dependency "ronn"
 
   s.files        = Dir.glob("{bin,lib,man}/**/*") + %w(LICENSE README.md)

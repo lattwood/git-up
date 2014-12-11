@@ -1,5 +1,5 @@
 require 'colored'
-require 'grit'
+require 'rugged'
 
 require 'git-up/version'
 
@@ -9,20 +9,20 @@ class GitUp
 
     command = ['git', 'fetch', '--multiple']
     command << '--prune' if prune?
-    command += config("fetch.all") ? ['--all'] : remotes
+    command += config('fetch.all') ? ['--all'] : remotes
 
-    # puts command.join(" ") # TODO: implement a 'debug' config option
+    # puts command.join(' ') # TODO: implement a 'debug' config option
     system(*command)
-    raise GitError, "`git fetch` failed" unless $? == 0
+    raise GitError, '`git fetch` failed' unless $? == 0
     @remote_map = nil # flush cache after fetch
 
-    Grit::Git.with_timeout(0) do
+#    Grit::Git.with_timeout(0) do
       with_stash do
         returning_to_current_branch do
           rebase_all_branches
         end
       end
-    end
+#    end
 
     check_bundler
   rescue GitError => e
@@ -35,10 +35,10 @@ class GitUp
 Fetch and rebase all remotely-tracked branches.
 
     $ git up
-    master         #{"up to date".green}
-    development    #{"rebasing...".yellow}
-    staging        #{"fast-forwarding...".yellow}
-    production     #{"up to date".green}
+    master         #{'up to date'.green}
+    development    #{'rebasing...'.yellow}
+    staging        #{'fast-forwarding...'.yellow}
+    production     #{'up to date'.green}
 
     $ git up --version    # print version info
     $ git up --help       # print this message
@@ -61,28 +61,28 @@ BANNER
     case argv
     when []
       return
-    when ["-v"], ["--version"]
+    when ['-v'], ['--version']
       $stdout.puts "git-up #{GitUp::VERSION}"
       exit
-    when ["man"]
-      system "man", man_path
+    when ['man']
+      system 'man', man_path
       exit
-    when ["install-man"]
-      destination = "/usr/local/share/man"
+    when ['install-man']
+      destination = '/usr/local/share/man'
       print "Destination to install man page to [#{destination}]: "
       override = $stdin.gets.strip
       destination = override if override.length > 0
 
-      dest_dir  = File.join(destination, "man1")
+      dest_dir  = File.join(destination, 'man1')
       dest_path = File.join(dest_dir, File.basename(man_path))
 
-      exit(1) unless system "mkdir", "-p", dest_dir
-      exit(1) unless system "cp", man_path, dest_path
+      exit(1) unless system 'mkdir', '-p', dest_dir
+      exit(1) unless system 'cp', man_path, dest_path
 
       puts "Installed to #{dest_path}"
 
       exit
-    when ["-h"], ["--help"]
+    when ['-h'], ['--help']
       $stderr.puts(banner)
       exit
     else
@@ -104,25 +104,25 @@ BANNER
         print curbranch
       end
 
-      if remote.commit.sha == branch.commit.sha
-        puts "up to date".green
+      if remote.target_id == branch.target_id
+        puts 'up to date'.green
         next
       end
 
       base = merge_base(branch.name, remote.name)
 
-      if base == remote.commit.sha
-        puts "ahead of upstream".cyan
+      if base == remote.target_id
+        puts 'ahead of upstream'.cyan
         next
       end
 
-      if base == branch.commit.sha
-        puts "fast-forwarding...".yellow
-      elsif config("rebase.auto") == 'false'
-        puts "diverged".red
+      if base == branch.target_id
+        puts 'fast-forwarding...'.yellow
+      elsif config('rebase.auto') == 'false'
+        puts 'diverged'.red
         next
       else
-        puts "rebasing...".yellow
+        puts 'rebasing...'.yellow
       end
 
       log(branch, remote)
@@ -140,14 +140,14 @@ BANNER
 
     if $? == 0
       Dir.chdir repo_dir
-      @repo = Grit::Repo.new(repo_dir)
+      @repo = Rugged::Repository.discover(repo_dir)
     else
-      raise GitError, "We don't seem to be in a git repository."
+      raise GitError, 'We don\'t seem to be in a git repository.'
     end
   end
 
   def branches
-    @branches ||= repo.branches.select { |b| remote_map.has_key?(b.name) }.sort_by { |b| b.name }
+    @branches ||= repo.branches.select { |b| remote_map.key?(b.name) }.sort_by(&:name)
   end
 
   def remotes
@@ -165,10 +165,10 @@ BANNER
   end
 
   def remote_for_branch(branch)
-    remote_name   = repo.config["branch.#{branch.name}.remote"] || "origin"
+    remote_name   = repo.config["branch.#{branch.name}.remote"] || 'origin'
     remote_branch = repo.config["branch.#{branch.name}.merge"] || branch.name
     remote_branch.sub!(%r{^refs/heads/}, '')
-    repo.remotes.find { |r| r.name == "#{remote_name}/#{remote_branch}" }
+    repo.branches.find { |r| r.name == "#{remote_name}/#{remote_branch}" }
   end
 
   def with_stash
@@ -176,21 +176,21 @@ BANNER
 
     if change_count > 0
       puts "stashing #{change_count} changes".magenta
-      repo.git.stash
+      run_cmd('stash')
       stashed = true
     end
 
     yield
 
     if stashed
-      puts "unstashing".magenta
-      repo.git.stash({}, "pop")
+      puts 'unstashing'.magenta
+      run_cmd('stash', 'pop')
     end
   end
 
   def returning_to_current_branch
     unless repo.head.respond_to?(:name)
-      puts "You're not currently on a branch. I'm exiting in case you're in the middle of something.".red
+      puts 'You\'re not currently on a branch. I\'m exiting in case you\'re in the middle of something.'.red
       return
     end
 
@@ -205,7 +205,7 @@ BANNER
   end
 
   def checkout(branch_name)
-    output = repo.git.checkout({}, branch_name)
+    output = run_cmd('checkout', branch_name)
 
     unless on_branch?(branch_name)
       raise GitError.new("Failed to checkout #{branch_name}", output)
@@ -213,18 +213,18 @@ BANNER
   end
 
   def log(branch, remote)
-    if log_hook = config("rebase.log-hook")
+    if log_hook = config('rebase.log-hook')
       system('sh', '-c', log_hook, 'git-up', branch.name, remote.name)
     end
   end
 
   def rebase(target_branch)
     current_branch = repo.head
-    arguments = config("rebase.arguments")
+    arguments = config('rebase.arguments')
 
-    output, err = repo.git.sh("#{Grit::Git.git_binary} rebase #{arguments} #{target_branch.name}")
+    output, err = run_cmd('rebase', arguments, target_branch.name)
 
-    unless on_branch?(current_branch.name) and is_fast_forward?(current_branch, target_branch)
+    unless on_branch?(current_branch.name) && is_fast_forward?(current_branch, target_branch)
       raise GitError.new("Failed to rebase #{current_branch.name} onto #{target_branch.name}", output+err)
     end
   end
@@ -241,25 +241,25 @@ BANNER
       puts
       print 'Gems are missing. '.yellow
 
-      if config("bundler.autoinstall") == 'true'
-        puts "Running `bundle install`.".yellow
-        system "bundle", "install"
+      if config('bundler.autoinstall') == 'true'
+        puts 'Running `bundle install`.'.yellow
+        system 'bundle', 'install'
       else
-        puts "You should `bundle install`.".yellow
+        puts 'You should `bundle install`.'.yellow
       end
     end
   end
 
   def is_fast_forward?(a, b)
-    merge_base(a.name, b.name) == b.commit.sha
+    merge_base(a.name, b.name) == b.target_id
   end
 
   def merge_base(a, b)
-    repo.git.send("merge-base", {}, a, b).strip
+    run_cmd('merge-base', a, b).strip
   end
 
   def on_branch?(branch_name=nil)
-    repo.head.respond_to?(:name) and repo.head.name == branch_name
+    repo.head.respond_to?(:name) and /#{branch_name}$/ =~ repo.head.name
   end
 
   class GitError < StandardError
@@ -267,9 +267,9 @@ BANNER
       @msg = "#{message.red}"
 
       if output
-        @msg << "\n"
-        @msg << "Here's what Git said:".red
-        @msg << "\n"
+        @msg << '\n'
+        @msg << 'Here\'s what Git said:'.red
+        @msg << '\n'
         @msg << output
       end
     end
@@ -304,12 +304,12 @@ Replace 'true' with 'false' to disable checking.
 EOS
     end
 
-    config("bundler.check") == 'true' || ENV['GIT_UP_BUNDLER_CHECK'] == 'true'
+    config('bundler.check') == 'true' || ENV['GIT_UP_BUNDLER_CHECK'] == 'true'
   end
 
   def prune?
-    required_version = "1.6.6"
-    config_value = config("fetch.prune")
+    required_version = '1.6.6'
+    config_value = config('fetch.prune')
 
     if git_version_at_least?(required_version)
       config_value != 'false'
@@ -324,7 +324,7 @@ EOS
 
   def change_count
     @change_count ||= begin
-      repo.git.status(:porcelain => true, :'untracked-files' => 'no').split("\n").count
+        run_cmd('status', '--porcelain', '--untracked-files=no').split('\n').count
     end
   end
 
@@ -342,6 +342,11 @@ EOS
 
   def git_version
     `git --version`[/\d+(\.\d+)+/]
+  end
+
+  def run_cmd(*args)
+    real_args = args.join(' ')
+    `git #{real_args}`
   end
 end
 
